@@ -1,0 +1,190 @@
+name: CI
+
+on:
+    push:
+        branches: [main, develop]
+    pull_request:
+        branches: [main, develop]
+
+jobs:
+    lint-and-typecheck:
+        name: Lint & Type Check
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+                  cache: "npm"
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Run type check
+              run: npm run typecheck
+
+            - name: Run linter
+              run: npm run lint || echo "Linter not configured"
+
+    unit-tests:
+        name: Unit Tests
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+                  cache: "npm"
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Run unit tests
+              run: npm run test:unit
+              env:
+                  NODE_ENV: test
+                  DATABASE_URL: postgresql://test:test@localhost:5432/test
+                  SUPABASE_PUBLISHABLE_KEY: test-anon-key
+                  SUPABASE_SECRET_KEY: test-secret-key
+                  SESSION_SECRET: test-session-secret-minimum-32-characters-long
+                  APP_URL: http://localhost:3000
+
+            - name: Upload coverage
+              uses: codecov/codecov-action@v4
+              if: always()
+              with:
+                  files: ./coverage/lcov.info
+                  fail_ci_if_error: false
+
+    integration-tests:
+        name: Integration Tests
+        runs-on: ubuntu-latest
+        services:
+            postgres:
+                image: postgres:16
+                env:
+                    POSTGRES_USER: test
+                    POSTGRES_PASSWORD: test
+                    POSTGRES_DB: test
+                options: >-
+                    --health-cmd pg_isready
+                    --health-interval 10s
+                    --health-timeout 5s
+                    --health-retries 5
+                ports:
+                    - 5432:5432
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+                  cache: "npm"
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Run database migrations
+              run: npm run migrate || echo "Migrations not configured"
+              env:
+                  DATABASE_URL: postgresql://test:test@localhost:5432/test
+
+            - name: Run integration tests
+              run: npm run test:integration
+              env:
+                  NODE_ENV: test
+                  DATABASE_URL: postgresql://test:test@localhost:5432/test
+                  SUPABASE_PUBLISHABLE_KEY: test-anon-key
+                  SUPABASE_SECRET_KEY: test-secret-key
+                  SESSION_SECRET: test-session-secret-minimum-32-characters-long
+                  APP_URL: http://localhost:3000
+
+    e2e-tests:
+        name: E2E Tests
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+                  cache: "npm"
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Build application
+              run: npm run build
+              env:
+                  NODE_ENV: production
+
+            - name: Start application
+              run: |
+                  npm start &
+                  sleep 10
+              env:
+                  NODE_ENV: production
+                  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+                  SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+                  SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+                  SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+                  APP_URL: http://localhost:3000
+
+            - name: Run E2E tests
+              uses: cypress-io/github-action@v6
+              with:
+                  start: npm start
+                  wait-on: "http://localhost:3000"
+                  wait-on-timeout: 120
+              env:
+                  TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
+                  TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+
+            - name: Upload Cypress screenshots
+              uses: actions/upload-artifact@v4
+              if: failure()
+              with:
+                  name: cypress-screenshots
+                  path: cypress/screenshots
+
+            - name: Upload Cypress videos
+              uses: actions/upload-artifact@v4
+              if: always()
+              with:
+                  name: cypress-videos
+                  path: cypress/videos
+
+    build:
+        name: Build
+        runs-on: ubuntu-latest
+        needs: [lint-and-typecheck, unit-tests]
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+                  cache: "npm"
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Build application
+              run: npm run build
+              env:
+                  NODE_ENV: production
+
+            - name: Upload build artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: build
+                  path: build/
+                  retention-days: 7

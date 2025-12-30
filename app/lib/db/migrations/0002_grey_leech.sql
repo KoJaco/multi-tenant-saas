@@ -1,0 +1,1 @@
+ALTER TYPE "public"."entity" ADD VALUE 'audit_logs';
